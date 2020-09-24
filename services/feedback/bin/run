@@ -1,0 +1,49 @@
+#!/usr/bin/env node
+
+const axios = require('axios');
+const http = require('http');
+const config = require('../config')[process.env.NODE_ENV || 'development'];
+
+const log = config.log();
+const service = require('../server/service')(config);
+
+const server = http.createServer(service);
+
+// Important - a service should not have a fixed port but should randomly choose one
+server.listen(0);
+
+server.on('listening', () => {
+  const serviceRegisterUrl = `${config.serviceRegistryHost}/register/${config.name}/${config.version}/${server.address().port}`;
+  const registerService = () => axios.put(serviceRegisterUrl).catch(err => log.fatal(err));
+  const unregisterService = () => axios.delete(serviceRegisterUrl).catch(err => log.fatal(err));
+
+  registerService();
+  const interval = setInterval(registerService, 15000);
+  const cleanup = async () => {
+    let isClean = false;
+    if (!isClean) {
+      isClean = true;
+      clearInterval(interval);
+      await unregisterService();
+    }
+  };
+
+  process.on('uncaughtException', async () => {
+    await cleanup();
+    process.exit(0);
+  });
+
+  process.on('SIGINT', async () => {
+    await cleanup();
+    process.exit(0);
+  });
+
+  process.on('SIGTERM', async () => {
+    await cleanup();
+    process.exit(0);
+  });
+
+  log.info(
+    `Feedback service running on port ${server.address().port} in ${service.get('env')} mode.`,
+  );
+});
